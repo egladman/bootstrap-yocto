@@ -56,7 +56,7 @@ _success() {
 
 _die() {
     _log "${RED}FATAL:${NC} ${@}"
-    _cleanup
+    #_cleanup
     exit 1
 }
 
@@ -245,6 +245,7 @@ else
 fi
 
 _debug "Installing package dependencies..."
+_log "You might be prompted to enter your password..."
 #Install fedora dependencies
 if [ $(command -v dnf) ]; then
     function gpg () {
@@ -356,7 +357,6 @@ BBLAYERS ?= " \
   ${YOCTO_TEMP_DIR}/poky/meta-openembedded/meta-networking \
   ${YOCTO_TEMP_DIR}/poky/meta-openembedded/meta-python \
   ${YOCTO_TEMP_DIR}/poky/meta-raspberrypi \
-  ${YOCTO_TEMP_DIR}/poky/meta-aatlive \
   "
 
 BBLAYERS_NON_REMOVABLE ?= " \
@@ -416,6 +416,11 @@ sudo su "${YOCTO_BUILD_USER}" -p -c '\
     bitbake "${BITBAKE_RECIPE}"' && _success "The image was successfully compiled ♥‿♥" || {
         _die "Failed to build image ಥ﹏ಥ"
     }
+
+#Graceful failure if the build results dir isn't present
+if [ ! -d "${YOCTO_TEMP_DIR}"/rpi/build/tmp/ ]; then
+    _die "Dude, where's my build?"
+fi
 
 YOCTO_RESULTS_DIR="${YOCTO_TEMP_DIR}/rpi/build/tmp/deploy/images/${YOCTO_TARGET}"
 YOCTO_RESULTS_BASENAME=$(basename "${YOCTO_RESULTS_SDIMG}" .rpi-sdimg)
