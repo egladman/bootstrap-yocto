@@ -406,6 +406,8 @@ sudo su "${YOCTO_BUILD_USER}" -p -c '\
     source "${YOCTO_TEMP_DIR}"/poky/oe-init-build-env "${YOCTO_TEMP_DIR}"/rpi/build && \
     echo MACHINE ??= \"${YOCTO_TARGET}\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
     echo CORE_IMAGE_EXTRA_INSTALL += \"${YOCTO_EXTRA_PACKAGES}\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
+    echo DISTRO_FEATURES_append = \"systemd\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
+    echo VIRTUAL-RUNTIME_init_manager = \"systemd\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
 
     #Debugging
     echo -e "\n!!!! start of conf/local.conf !!!!\n" && \
