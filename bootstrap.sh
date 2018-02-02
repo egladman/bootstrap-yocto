@@ -326,16 +326,16 @@ fi
 
 #Use systemd instead of SysVinit
 #http://www.yoctoproject.org/docs/current/dev-manual/dev-manual.html#selecting-an-initialization-manager
-cat << EOF > "${YOCTO_TEMP_DIR}"/poky/meta-poky/conf/distro/poky.conf
-DISTRO_FEATURES_append = " systemd"
-VIRTUAL-RUNTIME_init_manager = "systemd"
+# cat << EOF > "${YOCTO_TEMP_DIR}"/poky/meta-poky/conf/distro/poky.conf
+# DISTRO_FEATURES_append = " systemd"
+# VIRTUAL-RUNTIME_init_manager = "systemd"
 
-#Prevent the SysVinit distribution feature from being automatically enabled
-DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
+# #Prevent the SysVinit distribution feature from being automatically enabled
+# DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
 
-#Remove initscripts
-VIRTUAL-RUNTIME_initscripts = ""
-EOF
+# #Remove initscripts
+# VIRTUAL-RUNTIME_initscripts = ""
+# EOF
 
 #Create custom bblayers.conf
 mkdir -p "${YOCTO_TEMP_DIR}"/rpi/build/conf
@@ -367,10 +367,10 @@ BBLAYERS_NON_REMOVABLE ?= " \
 EOF
 
 YOCTO_EXTRA_PACKAGES=(    #layer dependency
-    "openssh"             #openembedded-core
+    # "openssh"             #openembedded-core
     "bash"                #openembedded-core
-    "git"                 #openembedded-core
-    "systemd"             #openembedded-core
+    # "git"                 #openembedded-core
+    # "systemd"             #openembedded-core
 )
 
 #Quick hack that if we're totally honest, probably won't be fixed
