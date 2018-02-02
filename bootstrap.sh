@@ -367,10 +367,9 @@ BBLAYERS_NON_REMOVABLE ?= " \
 EOF
 
 YOCTO_EXTRA_PACKAGES=(    #layer dependency
-    # "openssh"             #openembedded-core
+    "openssh"             #openembedded-core
     "bash"                #openembedded-core
-    # "git"                 #openembedded-core
-    # "systemd"             #openembedded-core
+    "git"                 #openembedded-core
 )
 
 #Quick hack that if we're totally honest, probably won't be fixed
