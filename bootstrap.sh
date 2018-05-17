@@ -2,27 +2,19 @@
 
 #Defaults
 VERBOSE=0
-UPLOAD=0
-ENABLE_GPG_SIGNING=0
 BASE_PATH="/tmp"
-YOCTO_TARGET="raspberrypi3"
+YOCTO_TARGET="f1c100s"
 CURRENT_WORKING_DIR=$(pwd)
 YOCTO_BUILD_USER=$(whoami)
 YOCTO_TEMP_DIR=""
 YOCTO_RESULTS_DIR=""
-BITBAKE_RECIPE="rpi-hwup-image"
-AWS_S3_BUCKET="s3://build.s3.aatlive.net"
-AWS_S3_BUCKET_PATH=""
+BITBAKE_RECIPE="core-image-minimal"
 GIT_REPO_NAME=""
 GIT_REPO_BRANCH=""
 GIT_COMMIT_HASH=""
-S3CMD_DOWNLOAD_CHECKSUM="d7477e7000a98552932d23e279d69a11"
-S3CMD_DOWNLOAD_URL="http://ufpr.dl.sourceforge.net/project/s3tools/s3cmd/1.6.1/s3cmd-1.6.1.tar.gz"
-S3CMD_VERSION_MINIMUM="1.6.1"
-S3CMD_VERSION_ACTUAL=""
-PGP_EMAIL=""
 
 export YOCTO_RELEASE="pyro"
+export YOCTO_DISTRO="poky-tiny"
 
 RED="\033[0;31m"
 GREEN="\033[32m"
@@ -30,20 +22,14 @@ YELLOW="\033[33m"
 CYAN="\033[36m"
 NC="\033[0m" #No color
 
-#The following variables are defined in shippable.yml
-#  - AWS_ACCESS_KEY: The AWS IAM public key
-#  - AWS_SECRET_KEY: The AWS IAM private key
-#  - PGP_PRIVATE_KEY_BASE64: Used to sign sha256sum
-#  - SSH_PRIVATE_KEY_BASE64: Used to clone private github repo
-
 _log() {
     echo -e ${0##*/}: "${@}" 1>&2
 }
 
 _debug() {
-    if [ "${VERBOSE}" -eq 1 ]; then
+  #  if [ "${VERBOSE}" -eq 1 ]; then
         _log "${CYAN}DEBUG:${NC} ${@}"
-    fi
+   # fi
 }
 
 _warn() {
@@ -57,30 +43,16 @@ _success() {
 _die() {
     _log "${RED}FATAL:${NC} ${@}"
     _cleanup
+    if [ "${VERBOSE}" -eq 1 ]; then
+	_debug "Killing process in 15 seconds..."
+	sleep 15s
+    fi
     exit 1
 }
 
 _cleanup() {
+    #TODO: check if i need to disable virtualenv
     rm -rf ${TEMP_DIR}
-}
-
-_install_s3cmd() {
-    #Install s3cmd manually as the version in the apt repository is terribly out-of-date
-    _debug "Installing s3cmd manually..."
-    wget -P "${YOCTO_TEMP_DIR}" "${S3CMD_DOWNLOAD_URL}" || _die "Failed to download s3cmd"
-
-    S3CMD_DOWNLOAD_NAME=$(basename "${S3CMD_DOWNLOAD_URL}")
-    S3CMD_DOWNLOAD_PATH="${YOCTO_TEMP_DIR}"/"${S3CMD_DOWNLOAD_NAME}"
-
-    #Validate download integrity before proceeding...
-    S3CMD_DOWNLOAD_CHECKSUM_ACTUAL=$( md5sum "${S3CMD_DOWNLOAD_PATH}" | cut -d' ' -f1 )
-    [ "${S3CMD_DOWNLOAD_CHECKSUM}" != "${S3CMD_DOWNLOAD_CHECKSUM_ACTUAL}" ] && _die "Checksum does not match!"
-
-    tar xzf "${S3CMD_DOWNLOAD_PATH}" -C "${YOCTO_TEMP_DIR}" || _die "Failed to uncompress s3cmd download"
-    pip install setuptools
-    cd "${YOCTO_TEMP_DIR}"/$(basename "${S3CMD_DOWNLOAD_NAME}" .tar.gz)
-    sudo python setup.py install || _die "Failed to install s3cmd"
-    cd "${CURRENT_WORKING_DIR}"
 }
 
 #Compares semantic versions
@@ -130,7 +102,7 @@ apt_dependencies=(
     "libsdl1.2-dev"
     "xterm"
     "python-pip"
-    "gnupg"
+    "virtualenv"
 )
 dnf_dependencies=(
     "gawk"
@@ -169,15 +141,17 @@ dnf_dependencies=(
     "xz"
     "SDL-devel"
     "xterm"
-    "gpg2"
     "texinfo"
     "cpan"
+    "python2"
+    "virtualenv"
+    "rpcgen"
 )
 
 _usage() {
 cat << EOF
 
-${0##*/} [-h] [-s] [-v] [-g] [-r string] [-p string] [-b path/to/directory] [-t string] -- setup yocto and compile/upload image
+${0##*/} [-h] [-v] [-r string] [-p string] [-b path/to/directory] [-t string] -- setup yocto and compile/upload image
 where:
     -h  show this help text
     -r  set yocto project release (default: ${YOCTO_RELEASE})
@@ -186,9 +160,6 @@ where:
     -p  set bitbake recipe (default: ${BITBAKE_RECIPE})
     -u  set yocto build user
     -v  verbose output
-    -g  gpg sign sha256sums
-    -e  set pgp email
-    -s  upload results to S3
 
 EOF
 }
@@ -200,21 +171,20 @@ while getopts ':h :v :s r: t: b: e: u: p:' option; do
            ;;
         v) VERBOSE=1
            ;;
-        s) UPLOAD=1
-           ;;
-        g) ENABLE_GPG_SIGNING=1
-           ;;
         r) YOCTO_RELEASE="${OPTARG}"
+	   _debug "YOCTO_RELEASE overrided to ${OPTARG}"
            ;;
         b) BASE_PATH="${OPTARG}"
-           ;;
-        e) PGP_EMAIL="${OPTARG}"
+	   _debug "BASE_PATH overrided to ${OPTARG}"
            ;;
         t) TARGET="${OPTARG}"
+	   _debug "TARGET overrided to ${OPTARG}"
            ;;
         p) BITBAKE_RECIPE="${OPTARG}"
+	   _debug "BITBAKE_RECIPE overrided to ${OPTARG}"
            ;;
         u) YOCTO_BUILD_USER="${OPTARG}"
+	   _debug "YOCTO_BUILD_USER overrided to ${OPTARG}"
            ;;
         :) printf "missing argument for -%s\n" "${OPTARG}"
            _usage
@@ -250,9 +220,6 @@ fi
 _debug "Installing package dependencies..."
 #Install fedora dependencies
 if [ $(command -v dnf) ]; then
-    function gpg () {
-        gpg2 "$@"
-    }
     sudo dnf update -y && sudo dnf install -y "${dnf_dependencies[@]}"
 fi
 
@@ -269,68 +236,26 @@ fi
 #If running locally and the following line fails run "cpan" to manually configure cpan
 cpan install bignum bigint || _die "Failed to install perl modules."
 
-#Check for pgp key
-#This feature should probably never be used... signing should be done manually
-if [ -z "${PGP_PRIVATE_KEY_BASE64}" ]; then
-    if [ $(gpg --list-keys "${PGP_EMAIL}" ) ]; then
-        _debug "Hell yeah, the gpg private keys is already imported"
-    else
-        _debug "PGP_PRIVATE_KEY_BASE64 is undefined and the private key hasnt been previously imported"
-        _debug "Disabling GPG signing..."
-        ENABLE_GPG_SIGNING=0
-    fi
-else
-    _debug "Importing pgp private key..."
-    echo "${PGP_PRIVATE_KEY_BASE64}" > infrastructure.private.asc.base64
-    cat infrastructure.private.asc.base64 | base64 --decode > infrastructure.private.asc || _die "Failed to decode base64 file."
-    gpg --import infrastructure.private.asc || _die "Failed to import private pgp key."
-    rm infrastructure.private.asc* || _die "Failed to remove file."
-fi
-
-#Check for ssh key
-if [ -z "${SSH_PRIVATE_KEY_BASE64}" ]; then
-    _debug "SSH_PRIVATE_KEY_BASE64 is undefined."
-else
-    _debug "Importing ssh private key..."
-    echo "${SSH_PRIVATE_KEY_BASE64}" > infrastructure.private.ssh.base64
-    cat infrastructure.private.ssh.base64 | base64 --decode > infrastructure.private.ssh || _die "Failed to decode base64 file."
-    mv infrastructure.private.ssh ~/.ssh/id_rsa || _die "Failed to move private ssh key."
-    chmod 600 ~/.ssh/id_rsa || _die "Failed to change file permissions."
-fi
-
-if [ "${CI}" = "true" ]; then
-    _debug "Checking Github SSH authentication..."
-    ssh-agent bash -c 'ssh-add ~/.ssh/id_rsa; ssh -T git@github.com' || true
-fi
-
 #Check if directory doesn't exist
 if [ ! -d "${BASE_PATH}" ]; then
     _die "Directory: ${BASE_PATH} does not exist!"
 fi
 
-export YOCTO_TEMP_DIR=$(mktemp -t yocto.XXXXXXXX -p "${BASE_PATH}" --directory --dry-run) #There are better ways of doing this.
+export YOCTO_TEMP_DIR=$(mktemp -t yocto.XXXXXXXX -p "${BASE_PATH}" --directory --dry-run) #There are better ways of doing this. Chance of collison
 
-_debug "Creating temporary directory: ${YOCTO_TEMP_DIR}"
 mkdir "${YOCTO_TEMP_DIR}" || _die "Failed to create temporary directory: ${YOCTO_TEMP_DIR}"
 
 _debug "Yocto Project Release: ${YOCTO_RELEASE}"
 
+#TODO: git:// is insecure. use https or ssh
 _debug "Cloning poky..."
-git clone -b "${YOCTO_RELEASE}" git://git.yoctoproject.org/poky "${YOCTO_TEMP_DIR}"/poky || _die "Failed to clone poky repository"
+git clone -b "${YOCTO_RELEASE}" https://git.yoctoproject.org/git/poky "${YOCTO_TEMP_DIR}"/poky || _die "Failed to clone poky repository"
 
 _debug "Cloning meta-openembedded..."
-git clone -b "${YOCTO_RELEASE}" git://git.openembedded.org/meta-openembedded "${YOCTO_TEMP_DIR}"/poky/meta-openembedded || _die "Failed to clone meta-openembedded repository"
+git clone -b "${YOCTO_RELEASE}" https://git.openembedded.org/meta-openembedded "${YOCTO_TEMP_DIR}"/poky/meta-openembedded || _die "Failed to clone meta-openembedded repository"
 
 _debug "Cloning meta-raspberrypi..."
-git clone -b "${YOCTO_RELEASE}" git://git.yoctoproject.org/meta-raspberrypi "${YOCTO_TEMP_DIR}"/poky/meta-raspberrypi || _die "Failed to clone meta-raspberrypi repository"
-
-_debug "Cloning meta-aatlive..."
-if [ -n "${SSH_PRIVATE_KEY_BASE64}" -a "${CI}" = "true" ]; then #CI is an environment variable provided by Shippable
-    _debug "Using provided ssh key..."
-    ssh-agent bash -c 'ssh-add ~/.ssh/id_rsa; git clone -b "${YOCTO_RELEASE}" git@github.com:ableat/meta-aatlive.git "${YOCTO_TEMP_DIR}"/poky/meta-aatlive' || _die "Failed to clone meta-aatlive repository"
-else
-    git clone -b "${YOCTO_RELEASE}" git@github.com:ableat/meta-aatlive.git "${YOCTO_TEMP_DIR}"/poky/meta-aatlive || _die "Failed to clone meta-aatlive repository"
-fi
+git clone -b "${YOCTO_RELEASE}" https://github.com/egladman/meta-sunxi.git "${YOCTO_TEMP_DIR}"/poky/meta-sunxi || _die "Failed to clone meta-sunxi repository"
 
 #Create custom bblayers.conf
 mkdir -p "${YOCTO_TEMP_DIR}"/rpi/build/conf
@@ -348,11 +273,7 @@ BBLAYERS ?= " \
   ${YOCTO_TEMP_DIR}/poky/meta \
   ${YOCTO_TEMP_DIR}/poky/meta-poky \
   ${YOCTO_TEMP_DIR}/poky/meta-openembedded/meta-oe \
-  ${YOCTO_TEMP_DIR}/poky/meta-openembedded/meta-multimedia \
-  ${YOCTO_TEMP_DIR}/poky/meta-openembedded/meta-networking \
-  ${YOCTO_TEMP_DIR}/poky/meta-openembedded/meta-python \
-  ${YOCTO_TEMP_DIR}/poky/meta-raspberrypi \
-  ${YOCTO_TEMP_DIR}/poky/meta-aatlive \
+  ${YOCTO_TEMP_DIR}/poky/meta-sunxi \
   "
 
 BBLAYERS_NON_REMOVABLE ?= " \
@@ -373,7 +294,7 @@ YOCTO_EXTRA_PACKAGES=(    #layer dependency
     "openssh"
     "rsync"        
     "traceroute"
-    "vim"
+    "vi"
 )
 
 YOCTO_EXTRA_IMAGE_FEATURES=(
@@ -382,10 +303,14 @@ YOCTO_EXTRA_IMAGE_FEATURES=(
 
 #Quick hack that if we're totally honest, probably won't be fixed
 #I was having problems preserving env variables across su (and yeah I know there's a param that SHOULD allow this)
-mkdir -p /tmp/aathub-yocto/env
+#We aren't writting anything sensitive, but it's still a bad practice
+
+#TODO: Use named pipe instead of writting to file
+mkdir -p /tmp/bootstrap-yocto/env || _die "Failed to create /tmp/bootstrap-yocto/env"
 variables=(
     "YOCTO_TEMP_DIR"
     "YOCTO_TARGET"
+    "YOCTO_DISTRO"
     "BITBAKE_RECIPE"
     "YOCTO_EXTRA_PACKAGES"
     "YOCTO_EXTRA_IMAGE_FEATURES"
@@ -398,25 +323,32 @@ for var in ${variables[@]}; do
     #check if variable is an array
     if [[ $(declare -p $var) == "declare -a"* ]]; then
         _debug "${var}: $(eval echo \${$var[@]})"
-        echo $(eval echo \${$var[@]}) > /tmp/aathub-yocto/env/"${var}" || _die "Failed to write array to file."
+        echo $(eval echo \${$var[@]}) > /tmp/bootstrap-yocto/env/"${var}" || _die "Failed to write array to file."
     else
         _debug "${var}: $(eval echo \$$var)"
-        echo $(eval echo \$$var) > /tmp/aathub-yocto/env/"${var}" || _die "Failed to write string to file."
+        echo $(eval echo \$$var) > /tmp/bootstrap-yocto/env/"${var}" || _die "Failed to write string to file."
     fi
 done
 
+#oe-init-build requires python2
+virtualenv -p /usr/bin/python2.7 --distribute temp-python
+#source temp-python/bin/activate
+
 _debug "Building image. Additional images can be found in ${YOCTO_TEMP_DIR}/meta*/recipes*/images/*.bb"
 sudo su "${YOCTO_BUILD_USER}" -p -c '\
-    YOCTO_TEMP_DIR="$(cat /tmp/aathub-yocto/env/YOCTO_TEMP_DIR)" && \
-    YOCTO_TARGET="$(cat /tmp/aathub-yocto/env/YOCTO_TARGET)" && \
-    BITBAKE_RECIPE="$(cat /tmp/aathub-yocto/env/BITBAKE_RECIPE)" && \
-    YOCTO_EXTRA_PACKAGES="$(cat /tmp/aathub-yocto/env/YOCTO_EXTRA_PACKAGES)" && \
-    YOCTO_EXTRA_IMAGE_FEATURES="$(cat /tmp/aathub-yocto/env/YOCTO_EXTRA_IMAGE_FEATURES)" && \
+    YOCTO_TEMP_DIR="$(cat /tmp/bootstrap-yocto/env/YOCTO_TEMP_DIR)" && \
+    YOCTO_TARGET="$(cat /tmp/bootstrap-yocto/env/YOCTO_TARGET)" && \
+    BITBAKE_RECIPE="$(cat /tmp/bootstrap-yocto/env/BITBAKE_RECIPE)" && \
+    YOCTO_EXTRA_PACKAGES="$(cat /tmp/bootstrap-yocto/env/YOCTO_EXTRA_PACKAGES)" && \
+    YOCTO_EXTRA_IMAGE_FEATURES="$(cat /tmp/bootstrap-yocto/env/YOCTO_EXTRA_IMAGE_FEATURES)" && \
+    YOCTO_DISTRO="$(cat /tmp/bootstrap-yocto/env/YOCTO_DISTRO)" && \
 
+    source temp-python/bin/activate && \
     source "${YOCTO_TEMP_DIR}"/poky/oe-init-build-env "${YOCTO_TEMP_DIR}"/rpi/build && \
     echo MACHINE ??= \"${YOCTO_TARGET}\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
     echo CORE_IMAGE_EXTRA_INSTALL += \"${YOCTO_EXTRA_PACKAGES}\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
     echo EXTRA_IMAGE_FEATURES += \"${YOCTO_EXTRA_IMAGE_FEATURES}\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
+    echo DISTRO = \"${YOCTO_DISTRO}\" >> "${YOCTO_TEMP_DIR}"/rpi/build/conf/local.conf && \
 
     #Debugging
     echo -e "\n!!!! start of conf/local.conf !!!!\n" && \
@@ -442,38 +374,3 @@ bzip2 --force "${YOCTO_RESULTS_EXT3}" || _die "Failed to bzip ${YOCTO_RESULTS_EX
 
 _debug "Generating sha256sums..."
 echo $(sha256sum "${YOCTO_RESULTS_SDIMG}.bz2" "${YOCTO_RESULTS_EXT3}.bz2") > "${YOCTO_RESULTS_DIR}"/$(basename "${YOCTO_RESULTS_SDIMG}" .rootfs.rpi-sdimg).sha256sums || _die "Failed to generate sha256sums."
-
-# This should be done manually/locally
-# This feature should be stripped out in the future
-if [ "${ENABLE_GPG_SIGNING}" -eq 1 -a -n "${PGP_EMAIL}" ]; then
-    _debug "Signing sha256sums..."
-    gpg -vv --no-tty --local-user "${PGP_EMAIL}" --output "${YOCTO_RESULTS_BASENAME}".sha256sums.sig --detach-sig "${YOCTO_RESULTS_BASENAME}".sha256sums || _die "Failed to sign sha256sums."
-else
-    _debug "Skipping gpg signing..."
-fi
-
-if [ "${UPLOAD}" -eq 1 ]; then
-    if [ -z "${AWS_ACCESS_KEY}" -o -z "${AWS_SECRET_KEY}" ]; then
-        if [ $(ls "${HOME}"/.s3cfg* | head -c1 | wc -c) -eq 0 ]; then
-            _die "One or more environmental variables are not set."
-        fi
-    fi
-
-    if [ $(command -v s3cmd) ]; then
-        S3CMD_VERSION_ACTUAL=$(s3cmd --version | cut -d' ' -f1)
-        if [ $(_compare_versions "${S3CMD_VERSION_MINIMUM}" "${S3CMD_VERSION_ACTUAL}") -eq 1 ]; then
-            _die "The s3cmd version doesn't meet the minimum requirements. Please install version "${S3CMD_VERSION_MINIMUM}" or greater."
-        fi
-    else
-        _install_s3cmd
-    fi
-
-    _debug "$(s3cmd --version)"
-    _debug "Uploading results to ${AWS_S3_BUCKET}"
-    UPLOAD_TIME=$(date +%s)
-    AWS_S3_BUCKET_PATH=Images/"${GIT_REPO_NAME}"/"${UPLOAD_TIME}"-"${GIT_COMMIT_HASH}"-"${GIT_REPO_BRANCH}"
-
-    destination="${AWS_S3_BUCKET}"/"${AWS_S3_BUCKET_PATH}"/
-    s3cmd put --acl-private --follow-symlinks --recursive --access_key="${AWS_ACCESS_KEY}" --secret_key="${AWS_SECRET_KEY}" "${YOCTO_RESULTS_DIR}" "${destination}" || _die "Failed to upload file: ${path}"
-    unset destination
-fi

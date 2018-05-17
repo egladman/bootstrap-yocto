@@ -2,7 +2,7 @@
   <a href="https://github.com/ableat/aathub-yocto"><img src="docs/imgs/brick.png" alt="aathub yocto" width="200"></a>
   <!-- https://pixabay.com/en/letter-alphabet-parts-reading-1546830/ -->
   <br>
-  aathub yocto
+  bootstrap yocto
   <br>
 </h1>
 
